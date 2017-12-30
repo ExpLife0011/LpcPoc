@@ -136,11 +136,13 @@ ApiPortServer(
     PORT_MESSAGE ReceiveMessage = { 0 };
     PPORT_MESSAGE ReplyMessage = NULL;
 
+    //创建服务器端通信端口
     Status = RdeLpcCreateSeApiPort(
         &ApiPortHandle);
 
     if (NT_SUCCESS(Status)) {
         while (TRUE) {
+            //等待端口消息 
             Status = NtReplyWaitReceivePort(
                 ApiPortHandle,
                 NULL,
@@ -150,6 +152,7 @@ ApiPortServer(
             if (NT_SUCCESS(Status)) {
                 ReplyMessage = &ReceiveMessage;
 
+                //判断消息类型
                 if (LPC_CONNECTION_REQUEST == ReceiveMessage.u2.s2.Type) {
                     Status = NtAcceptConnectPort(
                         &PortHandle,
@@ -179,6 +182,7 @@ ApiPortServer(
                     continue;
                 }
                 else if (LPC_REQUEST == ReceiveMessage.u2.s2.Type) {
+                    // 多线程需要拷贝消息数据 这里无附加数据
                     Status = NtReplyPort(ApiPortHandle, ReplyMessage);
 
                     RDE_DEBUG_OUTPUT(
@@ -186,6 +190,19 @@ ApiPortServer(
                         ReceiveMessage.u3.ClientId.UniqueThread,
                         ReceiveMessage.u2.s2.Type,
                         Status);
+                }
+                else if (LPC_PORT_CLOSED == ReceiveMessage.u2.s2.Type) {
+                    continue;
+                }
+                else if (LPC_CLIENT_DIED == ReceiveMessage.u2.s2.Type) {
+                    continue;
+                }
+                else {
+                    RDE_DEBUG_OUTPUT(
+                        TEXT("Unknow [%x]\n"),
+                        ReceiveMessage.u2.s2.Type);
+
+                    continue;
                 }
             }
         }
@@ -207,7 +224,9 @@ ConnectApiPort(
     SECURITY_QUALITY_OF_SERVICE SecurityQos = { 0 };
     ULONG MaxMessageLength = 0;
 
-    RtlInitUnicodeString(&ApiPortName, LPCPOC_APIPORT);
+    RtlInitUnicodeString(
+        &ApiPortName,
+        LPCPOC_APIPORT);
 
     SecurityQos.Length = sizeof(SECURITY_QUALITY_OF_SERVICE);
     SecurityQos.ImpersonationLevel = SecurityImpersonation;
@@ -239,6 +258,7 @@ ApiPortClient(
     HANDLE PortHandle = NULL;
     PORT_MESSAGE RequestMessage = { 0 };
 
+    //客户端连接
     Status = ConnectApiPort(&PortHandle);
 
     RDE_DEBUG_OUTPUT(
@@ -250,6 +270,7 @@ ApiPortClient(
         RequestMessage.u1.s1.TotalLength = PORT_MAXIMUM_MESSAGE_LENGTH;
         RequestMessage.u1.s1.DataLength = PORT_MAXIMUM_MESSAGE_LENGTH - sizeof(PORT_MESSAGE);
 
+        //发送消息 等待服务端响应 阻塞
         Status = NtRequestWaitReplyPort(
             PortHandle,
             &RequestMessage,
@@ -279,6 +300,7 @@ Main(
     NTSTATUS Status = STATUS_SUCCESS;
     HANDLE ThreadHandle[4] = { 0 };
 
+    //启动服务线程 这里最好用个事件同步下
     Status = RtlCreateUserThread(
         RdeCurrentProcess(),
         NULL,
@@ -291,6 +313,7 @@ Main(
         ThreadHandle,
         NULL);
 
+    //启动客户端线程1
     Status = RtlCreateUserThread(
         RdeCurrentProcess(),
         NULL,
@@ -303,6 +326,7 @@ Main(
         ThreadHandle + 1,
         NULL);
 
+    //启动客户端线程2
     Status = RtlCreateUserThread(
         RdeCurrentProcess(),
         NULL,
@@ -315,6 +339,7 @@ Main(
         ThreadHandle + 2,
         NULL);
 
+    //启动客户端线程3
     Status = RtlCreateUserThread(
         RdeCurrentProcess(),
         NULL,
@@ -328,9 +353,9 @@ Main(
         NULL);
 
     WaitForMultipleObjects(
-        _countof(ThreadHandle), 
-        ThreadHandle, 
-        TRUE, 
+        _countof(ThreadHandle),
+        ThreadHandle,
+        TRUE,
         INFINITE);
 
     for (SIZE_T i = 0;
@@ -340,6 +365,6 @@ Main(
     }
 
     NtTerminateProcess(
-        RdeCurrentProcess(), 
+        RdeCurrentProcess(),
         STATUS_SUCCESS);
 }
